@@ -2088,7 +2088,17 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
           },
           error: function (e) { console.error('[replay] VideoEncoder error:', String(e)); },
         });
-        _encoder.configure(_config);
+        // bitrateMode: 'constant' is required on iOS WKWebView — without it the engine
+        // treats `bitrate` as a loose hint and ignores it entirely, producing files 10–30×
+        // larger than intended (observed: 16 MB on TINY/50kbps instead of ~0.5 MB).
+        // Fall back to the default ('variable') if the platform rejects CBR.
+        try {
+          _encoder.configure(Object.assign({}, _config, { bitrateMode: 'constant' }));
+          console.log('[replay] encoder configured — bitrateMode: constant');
+        } catch (cbr_err) {
+          console.warn('[replay] bitrateMode: constant rejected, falling back to variable —', String(cbr_err));
+          _encoder.configure(_config);
+        }
         _frameCount = 0;
       }
 
