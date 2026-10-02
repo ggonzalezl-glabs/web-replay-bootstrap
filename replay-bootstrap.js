@@ -1950,6 +1950,26 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
   // ---------------------------------------------------------------------------
   var IS_RN = typeof window.ReactNativeWebView !== 'undefined';
 
+  // ---------------------------------------------------------------------------
+  // Host communication — self-contained, no gameBridgeScript dependency.
+  //
+  // In RN the game loads at top level so window.parent === window. Calling
+  // window.parent.postMessage() would loop back to the page itself instead of
+  // reaching the RN host. We bypass the parent entirely and call
+  // ReactNativeWebView.postMessage() directly.
+  //
+  // In web (iframe) context window.parent is the real host page — use normally.
+  // _transferToHost (onUploadToS3 with ArrayBuffer Transferable) is web-only
+  // and keeps its own window.parent.postMessage call.
+  // ---------------------------------------------------------------------------
+  function _postToHost(jsonStr) {
+    if (IS_RN) {
+      window.ReactNativeWebView.postMessage(jsonStr);
+    } else {
+      window.parent.postMessage(jsonStr, '*');
+    }
+  }
+
   console.log('[replay] bootstrap loading — context:', IS_RN ? 'ReactNative' : 'web');
 
   // ---------------------------------------------------------------------------
@@ -2127,7 +2147,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
           console.log('[replay] object URL:', window.__lastRecordingUrl);
 
           if (IS_RN) {
-            window.parent.postMessage(JSON.stringify({ method: 'onRecordingReady', parameters: {} }), '*');
+            _postToHost(JSON.stringify({ method: 'onRecordingReady', parameters: {} }));
             _transferToRN(_buffer);
           } else {
             _transferToHost(_buffer);
@@ -2160,7 +2180,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         console.log('[replay] MediaRecorder blob ready —', _blob.size, 'bytes (' + _blobMB + ' MB)');
         _blob.arrayBuffer().then(function (_buffer) {
           if (IS_RN) {
-            window.parent.postMessage(JSON.stringify({ method: 'onRecordingReady', parameters: {} }), '*');
+            _postToHost(JSON.stringify({ method: 'onRecordingReady', parameters: {} }));
             _transferToRN(_buffer);
           } else {
             _transferToHost(_buffer);
@@ -2234,7 +2254,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         _fpsFrames++;
         if (now - _fpsLast >= 1000) {
           var _mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / BYTES_PER_MB) : null;
-          window.parent.postMessage(JSON.stringify({
+          _postToHost(JSON.stringify({
             method: 'onDebugFps',
             parameters: {
               fps:             _fpsFrames,
@@ -2248,7 +2268,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
                                  ? Math.round(_encodedBytes / TENTH_MB_DIVISOR) / 10
                                  : null,
             },
-          }), '*');
+          }));
           _fpsFrames = 0;
           _fpsLast = now;
         }
@@ -2278,7 +2298,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
     var _total  = Math.ceil(_base64.length / TRANSFER_CHUNK_CHARS);
     console.log('[replay] transferring to native —', _total, 'chunk(s),', buffer.byteLength, 'bytes');
     for (var ci = 0; ci < _total; ci++) {
-      window.parent.postMessage(JSON.stringify({
+      _postToHost(JSON.stringify({
         method: 'onNativeTransferChunk',
         parameters: {
           index: ci,
@@ -2286,12 +2306,12 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
           size:  buffer.byteLength,
           data:  _base64.slice(ci * TRANSFER_CHUNK_CHARS, (ci + 1) * TRANSFER_CHUNK_CHARS),
         },
-      }), '*');
+      }));
     }
-    window.parent.postMessage(JSON.stringify({
+    _postToHost(JSON.stringify({
       method: 'onNativeTransferDone',
       parameters: { size: buffer.byteLength },
-    }), '*');
+    }));
   }
 
   // ---------------------------------------------------------------------------
