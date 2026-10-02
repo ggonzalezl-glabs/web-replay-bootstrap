@@ -1936,6 +1936,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
   var FRAME_DURATION_US       = Math.round(1000000 / RECORDING_FPS); // 66 667 µs
   var TARGET_BITRATE_BPS      = 1000000;                             // 1 Mbps
   var KEYFRAME_EVERY_FRAMES   = RECORDING_FPS * 4;                  // 60 frames — keyframe every 4 s
+  var SCALE                   = 1.0;                                 // output dimension multiplier (0–1)
   var BYTES_PER_MB            = 1048576;
   var TENTH_MB_DIVISOR        = BYTES_PER_MB / 10;                  // 104 857.6
   var RECORDER_TIMESLICE_MS   = 1000;                               // MediaRecorder chunk interval
@@ -2049,7 +2050,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
 
       console.log('[replay] VideoEncoder + Mp4Muxer available — using offscreen 2D canvas path');
 
-      var _config = { codec: 'avc1.640028', width: w, height: h, bitrate: TARGET_BITRATE_BPS, framerate: RECORDING_FPS };
+      var _config = null; // built in __startRecording after runtime config overrides are applied
       var _muxer        = null;
       var _encoder      = null;
       var _recording    = false;
@@ -2070,9 +2071,13 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         var root = await navigator.storage.getDirectory();
         _opfsHandle   = await root.getFileHandle('replay.mp4', { create: true });
         _opfsWritable = await _opfsHandle.createWritable();
+        // Derive the short codec name mp4-muxer expects from the full WebCodecs codec string.
+        var _muxerCodec = _config.codec.startsWith('hvc') || _config.codec.startsWith('hev') ? 'hevc' :
+                          _config.codec.startsWith('vp09') || _config.codec.startsWith('vp9') ? 'vp9' :
+                          _config.codec.startsWith('av01') ? 'av1' : 'avc';
         _muxer = new Mp4Muxer.Muxer({
           target: new Mp4Muxer.FileSystemWritableFileStreamTarget(_opfsWritable),
-          video: { codec: 'avc', width: w, height: h },
+          video: { codec: _muxerCodec, width: _config.width, height: _config.height },
           fastStart: false,           // moov atom at end — no in-memory buffering
           firstTimestampBehavior: 'offset',
         });
@@ -2096,7 +2101,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
           requestAnimationFrame(function (ts) {
             if (!_recording) return;
             try {
-              _ctx2d.drawImage(canvas, 0, 0, w, h);
+              _ctx2d.drawImage(canvas, 0, 0, _offscreen.width, _offscreen.height);
               // duration must be explicit — WKWebView sets it to null otherwise.
               var frame = new VideoFrame(_offscreen, {
                 timestamp: Math.round(ts * 1000),
@@ -2115,15 +2120,42 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         }, CAPTURE_INTERVAL_MS);
       }
 
-      window.__startRecording = async function () {
+      window.__startRecording = async function (cfg) {
         if (_recording) { console.warn('[replay] already recording'); return; }
+
+        // Apply runtime config overrides — all fields optional; module-level constants are defaults.
+        if (cfg && typeof cfg === 'object') {
+          if (typeof cfg.fps === 'number' && cfg.fps > 0) {
+            RECORDING_FPS         = cfg.fps;
+            CAPTURE_INTERVAL_MS   = Math.floor(1000 / RECORDING_FPS);
+            FRAME_DURATION_US     = Math.round(1000000 / RECORDING_FPS);
+            KEYFRAME_EVERY_FRAMES = RECORDING_FPS * 4;
+          }
+          if (typeof cfg.bitrateKbps === 'number' && cfg.bitrateKbps > 0)
+            TARGET_BITRATE_BPS = cfg.bitrateKbps * 1000;
+          if (typeof cfg.scale === 'number' && cfg.scale > 0 && cfg.scale <= 2)
+            SCALE = cfg.scale;
+        }
+
+        // Scaled output dimensions — H.264 requires even numbers; floor to minimum 2×2.
+        var ew = Math.max(2, Math.round(w * SCALE) & ~1);
+        var eh = Math.max(2, Math.round(h * SCALE) & ~1);
+        _offscreen.width  = ew;
+        _offscreen.height = eh;
+
+        // Build encoder config after all overrides are applied.
+        var _codecStr = (cfg && typeof cfg.codec === 'string' && cfg.codec) ? cfg.codec : 'avc1.640028';
+        _config = { codec: _codecStr, width: ew, height: eh, bitrate: TARGET_BITRATE_BPS, framerate: RECORDING_FPS };
+
         try { await _initEncoder(); } catch (e) {
           console.error('[replay] OPFS init failed:', String(e)); return;
         }
         _recording = true; _isRecording = true;
         _recStart = performance.now(); _recFrames = 0;
         _blobMB = null; _queueSize = 0; _encodedBytes = 0;
-        console.log('[replay] started (VideoEncoder + OPFS, ' + RECORDING_FPS + ' fps)');
+        console.log('[replay] started (VideoEncoder + OPFS) —',
+          RECORDING_FPS + 'fps,', Math.round(TARGET_BITRATE_BPS / 1000) + 'kbps,',
+          ew + 'x' + eh, '(scale ' + SCALE + ')');
         _scheduleCapture();
       };
 
