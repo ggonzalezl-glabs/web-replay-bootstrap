@@ -2065,11 +2065,15 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
       var _ctx2d = _offscreen.getContext('2d');
 
       // Sets up OPFS file + writable stream + muxer + encoder.
-      // chunkSize: 1 MB — mp4-muxer's FileSystemWritableFileStreamTarget defaults to 16 MB
-      // (2**24) chunks. On recordings smaller than the chunk size the muxer allocates a
-      // 16 MB Uint8Array and flushes it to OPFS as-is, inflating the file to 16 MB even for
-      // a 0.6 MB TINY/50kbps recording. A 1 MB chunk keeps streaming intact (each chunk is
-      // written to disk when full) while capping per-chunk RAM at 1 MB.
+      // Uses StreamTarget instead of FileSystemWritableFileStreamTarget.
+      // FileSystemWritableFileStreamTarget uses ChunkedDataWriter whose default chunk size is
+      // 2**24 = 16 MB. Every recording smaller than that chunk is padded to 16 MB (the muxer
+      // pre-allocates a 16 MB Uint8Array and writes it to OPFS as-is). Any fixed chunkSize
+      // creates a minimum floor — e.g. chunkSize:1MB means a 0.4 MB recording becomes 1 MB.
+      // StreamTarget has no chunking: it fires onData(data, position) for each individual
+      // write the muxer makes, which we relay directly to the OPFS WritableFileStream using
+      // write({ type:'write', data, position }). The file only grows when a write lands past
+      // the current end — the final OPFS file size equals the actual MP4 size, no padding.
       async function _initEncoder() {
         var root = await navigator.storage.getDirectory();
         _opfsHandle   = await root.getFileHandle('replay.mp4', { create: true });
@@ -2079,7 +2083,13 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
                           _config.codec.startsWith('vp09') || _config.codec.startsWith('vp9') ? 'vp9' :
                           _config.codec.startsWith('av01') ? 'av1' : 'avc';
         _muxer = new Mp4Muxer.Muxer({
-          target: new Mp4Muxer.FileSystemWritableFileStreamTarget(_opfsWritable, { chunkSize: 1024 * 1024 }),
+          target: new Mp4Muxer.StreamTarget({
+            onData: function(data, position) {
+              // Fire-and-forget: the WritableFileStream queues writes internally in order.
+              // close() at the end drains the queue before returning.
+              _opfsWritable.write({ type: 'write', data: data, position: position });
+            },
+          }),
           video: { codec: _muxerCodec, width: _config.width, height: _config.height },
           fastStart: false,           // moov atom at end — no in-memory buffering
           firstTimestampBehavior: 'offset',
