@@ -2256,7 +2256,9 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
       var _origStart = window.gameBridge.onStartGame;
       window.gameBridge.onStartGame = function (s) {
         if (_origStart) _origStart.call(this, s);
-        window.__startRecording && window.__startRecording();
+        // Pass window.__replayConfig so the host-supplied quality settings are applied.
+        // Set by the RN session before injecting the bootstrap; undefined in web/standalone contexts.
+        window.__startRecording && window.__startRecording(window.__replayConfig);
       };
       var _origReturn = window.gameBridge.onReturnToContainer;
       window.gameBridge.onReturnToContainer = function () {
