@@ -2065,8 +2065,11 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
       var _ctx2d = _offscreen.getContext('2d');
 
       // Sets up OPFS file + writable stream + muxer + encoder.
-      // FileSystemWritableFileStreamTarget streams encoded chunks to disk as
-      // they arrive — JS heap stays near-flat for the entire session.
+      // chunkSize: 1 MB — mp4-muxer's FileSystemWritableFileStreamTarget defaults to 16 MB
+      // (2**24) chunks. On recordings smaller than the chunk size the muxer allocates a
+      // 16 MB Uint8Array and flushes it to OPFS as-is, inflating the file to 16 MB even for
+      // a 0.6 MB TINY/50kbps recording. A 1 MB chunk keeps streaming intact (each chunk is
+      // written to disk when full) while capping per-chunk RAM at 1 MB.
       async function _initEncoder() {
         var root = await navigator.storage.getDirectory();
         _opfsHandle   = await root.getFileHandle('replay.mp4', { create: true });
@@ -2076,7 +2079,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
                           _config.codec.startsWith('vp09') || _config.codec.startsWith('vp9') ? 'vp9' :
                           _config.codec.startsWith('av01') ? 'av1' : 'avc';
         _muxer = new Mp4Muxer.Muxer({
-          target: new Mp4Muxer.FileSystemWritableFileStreamTarget(_opfsWritable),
+          target: new Mp4Muxer.FileSystemWritableFileStreamTarget(_opfsWritable, { chunkSize: 1024 * 1024 }),
           video: { codec: _muxerCodec, width: _config.width, height: _config.height },
           fastStart: false,           // moov atom at end — no in-memory buffering
           firstTimestampBehavior: 'offset',
