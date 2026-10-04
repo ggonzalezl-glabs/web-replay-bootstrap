@@ -1929,17 +1929,25 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
   'use strict';
 
   // ---------------------------------------------------------------------------
+  // Unit conversion constants
+  // ---------------------------------------------------------------------------
+  var MS_PER_SECOND  = 1000;     // milliseconds per second  — fps → capture interval, elapsed time
+  var US_PER_SECOND  = 1000000;  // microseconds per second  — fps → VideoFrame.duration
+  var US_PER_MS      = 1000;     // microseconds per ms      — rAF timestamp (ms) → VideoFrame.timestamp (µs)
+  var BPS_PER_KBPS   = 1000;     // bits/s per kilobit/s     — bitrateKbps ↔ VideoEncoder.bitrate
+
+  // ---------------------------------------------------------------------------
   // Configuration
   // ---------------------------------------------------------------------------
   var RECORDING_FPS           = 15;
-  var CAPTURE_INTERVAL_MS     = Math.floor(1000 / RECORDING_FPS);    // 66 ms
-  var FRAME_DURATION_US       = Math.round(1000000 / RECORDING_FPS); // 66 667 µs
-  var TARGET_BITRATE_BPS      = 1000000;                             // 1 Mbps
-  var KEYFRAME_EVERY_FRAMES   = RECORDING_FPS * 4;                  // 60 frames — keyframe every 4 s
-  var SCALE                   = 1.0;                                 // output dimension multiplier (0–1)
+  var CAPTURE_INTERVAL_MS     = Math.floor(MS_PER_SECOND / RECORDING_FPS);  // 66 ms
+  var FRAME_DURATION_US       = Math.round(US_PER_SECOND / RECORDING_FPS);  // 66 667 µs
+  var TARGET_BITRATE_BPS      = 1000 * BPS_PER_KBPS;                        // default 1000 kbps = 1 Mbps
+  var KEYFRAME_EVERY_FRAMES   = RECORDING_FPS * 4;                          // 60 frames — keyframe every 4 s
+  var SCALE                   = 1.0;                                         // output dimension multiplier (0–1)
   var BYTES_PER_MB            = 1048576;
-  var TENTH_MB_DIVISOR        = BYTES_PER_MB / 10;                  // 104 857.6
-  var RECORDER_TIMESLICE_MS   = 1000;                               // MediaRecorder chunk interval
+  var TENTH_MB_DIVISOR        = BYTES_PER_MB / 10;                          // 104 857.6
+  var RECORDER_TIMESLICE_MS   = MS_PER_SECOND;                              // MediaRecorder chunk interval (1 s)
   var CANVAS_RETRY_INTERVAL_MS = 500;
   var CANVAS_MAX_RETRIES      = 10;
   var TRANSFER_CHUNK_CHARS    = 50000;  // base64 chars per RN postMessage chunk
@@ -2127,7 +2135,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
               _ctx2d.drawImage(canvas, 0, 0, _offscreen.width, _offscreen.height);
               // duration must be explicit — WKWebView sets it to null otherwise.
               var frame = new VideoFrame(_offscreen, {
-                timestamp: Math.round(ts * 1000),
+                timestamp: Math.round(ts * US_PER_MS),
                 duration: FRAME_DURATION_US,
               });
               _encoder.encode(frame, { keyFrame: _frameCount % KEYFRAME_EVERY_FRAMES === 0 });
@@ -2150,12 +2158,12 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         if (cfg && typeof cfg === 'object') {
           if (typeof cfg.fps === 'number' && cfg.fps > 0) {
             RECORDING_FPS         = cfg.fps;
-            CAPTURE_INTERVAL_MS   = Math.floor(1000 / RECORDING_FPS);
-            FRAME_DURATION_US     = Math.round(1000000 / RECORDING_FPS);
+            CAPTURE_INTERVAL_MS   = Math.floor(MS_PER_SECOND / RECORDING_FPS);
+            FRAME_DURATION_US     = Math.round(US_PER_SECOND / RECORDING_FPS);
             KEYFRAME_EVERY_FRAMES = RECORDING_FPS * 4;
           }
           if (typeof cfg.bitrateKbps === 'number' && cfg.bitrateKbps > 0)
-            TARGET_BITRATE_BPS = cfg.bitrateKbps * 1000;
+            TARGET_BITRATE_BPS = cfg.bitrateKbps * BPS_PER_KBPS;
           if (typeof cfg.scale === 'number' && cfg.scale > 0 && cfg.scale <= 2)
             SCALE = cfg.scale;
         }
@@ -2177,7 +2185,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
         _recStart = performance.now(); _recFrames = 0;
         _blobMB = null; _queueSize = 0; _encodedBytes = 0;
         console.log('[replay] started (VideoEncoder + OPFS) —',
-          RECORDING_FPS + 'fps,', Math.round(TARGET_BITRATE_BPS / 1000) + 'kbps,',
+          RECORDING_FPS + 'fps,', Math.round(TARGET_BITRATE_BPS / BPS_PER_KBPS) + 'kbps,',
           ew + 'x' + eh, '(scale ' + SCALE + ')');
         _scheduleCapture();
       };
@@ -2309,7 +2317,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
       var _fpsLast = performance.now();
       function _fpsTick(now) {
         _fpsFrames++;
-        if (now - _fpsLast >= 1000) {
+        if (now - _fpsLast >= MS_PER_SECOND) {
           var _mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / BYTES_PER_MB) : null;
           _postToHost(JSON.stringify({
             method: 'onDebugFps',
@@ -2317,7 +2325,7 @@ if (typeof module === "object" && typeof module.exports === "object") Object.ass
               fps:             _fpsFrames,
               memoryMB:        _mem,
               recording:       _isRecording,
-              elapsedSeconds:  _isRecording ? Math.round((now - _recStart) / 1000) : 0,
+              elapsedSeconds:  _isRecording ? Math.round((now - _recStart) / MS_PER_SECOND) : 0,
               frameCount:      _recFrames,
               blobSizeMB:      _blobMB,
               encodeQueueSize: _queueSize,
